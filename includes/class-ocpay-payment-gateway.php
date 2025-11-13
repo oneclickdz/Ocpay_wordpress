@@ -127,16 +127,45 @@ class OCPay_Payment_Gateway extends WC_Payment_Gateway {
 	 * @return bool
 	 */
 	public function is_available() {
-		// Must be enabled
-		if ( 'yes' !== $this->enabled ) {
-			return false;
-		}
-		// Must have API key configured
-		if ( ! $this->get_option( 'api_key' ) ) {
-			return false;
-		}
+		try {
+			// Enhanced debug information
+			$debug_info = [
+				'time' => current_time('mysql'),
+				'is_admin' => is_admin(),
+				'enabled' => isset($this->enabled) ? $this->enabled : 'not set',
+				'currency' => function_exists('get_woocommerce_currency') ? get_woocommerce_currency() : 'WC not loaded',
+				'wc_loaded' => class_exists('WooCommerce') ? 'yes' : 'no',
+				'cart_initialized' => (isset(WC()->cart) && is_object(WC()->cart)) ? 'yes' : 'no',
+				'is_checkout' => (function_exists('is_checkout') && is_checkout()) ? 'yes' : 'no',
+				'is_checkout_pay_page' => (function_exists('is_checkout_pay_page') && is_checkout_pay_page()) ? 'yes' : 'no',
+				'current_filter' => current_filter(),
+				'api_key_set' => !empty($this->get_option('api_key')) ? 'yes' : 'no',
+				'api_mode' => $this->get_option('api_mode', 'not set'),
+			];
+			
+			// Log the debug info
+			error_log('OCPay: is_available() called. ' . print_r($debug_info, true));
 
-		return true;
+			// Must be enabled
+			if ( 'yes' !== $this->enabled ) {
+				error_log('OCPay: Gateway is NOT available - not enabled. enabled=' . $this->enabled);
+				return false;
+			}
+			
+			// Must have API key configured
+			if ( ! $this->get_option( 'api_key' ) ) {
+				error_log('OCPay: Gateway is NOT available - no API key');
+				return false;
+			}
+
+			error_log('OCPay: Gateway IS available - all checks passed');
+			return true;
+
+		} catch ( Exception $e ) {
+			// Log any exceptions that occur during availability check
+			error_log('OCPay: Error checking gateway availability: ' . $e->getMessage());
+			return false;
+		}
 	}
 
 	/**
