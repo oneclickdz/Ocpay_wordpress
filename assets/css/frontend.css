@@ -203,3 +203,65 @@
     outline: 2px solid #0073aa;
     outline-offset: 2px;
 }
+
+/* WooCommerce Blocks Specific Styles */
+.wc-block-components-payment-method-content--ocpay {
+    padding: 15px 0;
+}
+
+.wc-block-components-payment-method-content__description {
+    color: #666;
+    font-size: 14px;
+    line-height: 1.5;
+    margin: 0 0 10px 0;
+}
+
+.wc-block-components-payment-method-logo {
+    max-height: 40px;
+    max-width: 200px;
+    height: auto;
+    width: auto;
+    object-fit: contain;
+    display: block;
+    margin: 10px 0;
+}
+
+.wc-block-components-payment-method-label--ocpay {
+    display: flex;
+    align-items: center;
+    font-weight: 600;
+}
+
+.wc-block-components-payment-method-label__text {
+    flex: 1;
+}
+
+.wc-block-components-payment-method-label__logo {
+    max-height: 24px;
+    margin-left: 8px;
+    height: auto;
+    width: auto;
+    object-fit: contain;
+}
+
+/* Block checkout specific adjustments */
+.wp-block-woocommerce-checkout .wc-block-components-radio-control-accordion-option {
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    margin-bottom: 1em;
+}
+
+.wp-block-woocommerce-checkout .wc-block-components-radio-control-accordion-option:focus-within {
+    border-color: #0073aa;
+    box-shadow: 0 0 0 1px #0073aa;
+}
+
+/* Ensure proper spacing in blocks */
+.wc-block-checkout__payment-method .wc-block-components-payment-method-content--ocpay p:last-child {
+    margin-bottom: 0;
+}
+
+/* Loading state for blocks */
+.wc-block-checkout__payment-method .wc-block-components-payment-method-content--ocpay .ocpay-spinner {
+    margin: 10px 0;
+}

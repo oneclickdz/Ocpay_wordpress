@@ -15,17 +15,20 @@ defined( 'ABSPATH' ) || exit;
 class OCPay_Block_Support {
 
 	/**
+	 * Payment method name
+	 *
+	 * @var string
+	 */
+	private $name = 'ocpay';
+
+	/**
 	 * Initialize block support
 	 *
 	 * @return void
 	 */
 	public static function init() {
-		// Register block script
+		// Enqueue scripts on checkout/cart pages
 		add_action( 'wp_enqueue_scripts', array( __CLASS__, 'enqueue_block_scripts' ), 100 );
-		add_action( 'admin_enqueue_scripts', array( __CLASS__, 'enqueue_block_scripts' ), 100 );
-		
-		// Filter available payment gateways for REST API (used by Blocks)
-		add_filter( 'woocommerce_rest_payment_gateways_controller_get_items_permissions_check', array( __CLASS__, 'allow_blocks_payment_methods' ), 10, 3 );
 	}
 
 	/**
@@ -34,58 +37,79 @@ class OCPay_Block_Support {
 	 * @return void
 	 */
 	public static function enqueue_block_scripts() {
-		// Only load on checkout
-		if ( ! ( is_checkout() || is_cart() ) && ! function_exists( 'is_block_content' ) ) {
+		// Only load on checkout or cart pages with blocks
+		global $post;
+		if ( ! $post ) {
 			return;
 		}
 
-		// Register the payment method script for blocks
+		// Check if this page has WooCommerce blocks
+		if ( ! ( has_block( 'woocommerce/checkout', $post ) || has_block( 'woocommerce/cart', $post ) ) ) {
+			return;
+		}
+
+		// Get the asset file for dependencies
+		$script_asset_path = OCPAY_WOOCOMMERCE_PATH . 'assets/js/blocks-payment-method.asset.php';
+		$script_asset      = file_exists( $script_asset_path )
+			? require( $script_asset_path )
+			: array(
+				'dependencies' => array(
+					'wp-element',
+					'wp-i18n',
+					'wp-html-entities',
+					'wc-blocks-registry',
+					'wc-settings'
+				),
+				'version'      => OCPAY_WOOCOMMERCE_VERSION,
+			);
+
+		// Register and enqueue the script
 		wp_register_script(
-			'ocpay-blocks-payment-method',
+			'ocpay-blocks-integration',
 			OCPAY_WOOCOMMERCE_URL . 'assets/js/blocks-payment-method.js',
-			array(
-				'wc-blocks-checkout',
-				'wc-blocks-data-store',
-			),
-			OCPAY_WOOCOMMERCE_VERSION,
+			$script_asset['dependencies'],
+			$script_asset['version'],
 			true
 		);
 
-		// Check if this is a block-based checkout
-		if ( has_block( 'woocommerce/checkout' ) || has_block( 'woocommerce/cart' ) ) {
-			wp_enqueue_script( 'ocpay-blocks-payment-method' );
+		wp_enqueue_script( 'ocpay-blocks-integration' );
 
-			// Pass gateway info to JavaScript
-			wp_localize_script(
-				'ocpay-blocks-payment-method',
-				'ocpayBlocksData',
-				array(
-					'gatewayId'     => 'ocpay',
-					'title'         => esc_html__( 'OCPay - OneClick Payment', 'ocpay-woocommerce' ),
-					'description'   => esc_html__( 'Pay securely using OCPay - powered by SATIM bank-grade security.', 'ocpay-woocommerce' ),
-					'icon'          => OCPAY_WOOCOMMERCE_URL . 'assets/images/ocpay-logo.png',
-					'canMakePayment' => true,
-				)
+		// Get gateway and pass its data to JavaScript
+		$gateways = WC()->payment_gateways->payment_gateways();
+		$gateway  = isset( $gateways['ocpay'] ) ? $gateways['ocpay'] : null;
+
+		if ( $gateway ) {
+			$payment_data = array(
+				'title'       => $gateway->get_title(),
+				'description' => $gateway->get_description(),
+				'supports'    => array_filter( $gateway->supports, array( $gateway, 'supports' ) ),
+				'logo_url'    => OCPAY_WOOCOMMERCE_URL . 'assets/images/ocpay-logo.png',
+			);
+		} else {
+			$payment_data = array(
+				'title'       => __( 'OCPay - OneClick Payment', 'ocpay-woocommerce' ),
+				'description' => __( 'Pay securely using OCPay - powered by SATIM bank-grade security.', 'ocpay-woocommerce' ),
+				'logo_url'    => OCPAY_WOOCOMMERCE_URL . 'assets/images/ocpay-logo.png',
 			);
 		}
-	}
 
-	/**
-	 * Allow payment methods to be retrieved via REST API
-	 *
-	 * @param bool|\WP_Error $permitted Whether the request is permitted.
-	 * @param object         $post       The post object.
-	 * @param \WP_REST_Request $request The request object.
-	 * @return bool|\WP_Error
-	 */
-	public static function allow_blocks_payment_methods( $permitted, $post = null, $request = null ) {
-		// Allow unauthenticated access to payment methods for blocks checkout
-		if ( is_wp_error( $permitted ) ) {
-			return true; // Override permission check for REST API
-		}
-		return $permitted;
+		// Localize script with payment data
+		wp_localize_script(
+			'ocpay-blocks-integration',
+			'ocpayBlocksData',
+			$payment_data
+		);
+
+		// Also try to set it via wc.wcSettings if available
+		wp_add_inline_script(
+			'ocpay-blocks-integration',
+			sprintf(
+				'if (window.wc && window.wc.wcSettings) { window.wc.wcSettings.setSetting("ocpay_data", %s); }',
+				wp_json_encode( $payment_data )
+			),
+			'after'
+		);
+
+		error_log( 'OCPay: Blocks payment method script enqueued' );
 	}
 }
-
-// Initialize block support on plugins_loaded
-add_action( 'woocommerce_blocks_loaded', array( 'OCPay_Block_Support', 'init' ), 10 );

@@ -379,8 +379,26 @@ require_once OCPAY_WOOCOMMERCE_PATH . 'includes/class-ocpay-error-handler.php';
 require_once OCPAY_WOOCOMMERCE_PATH . 'includes/class-ocpay-validator.php';
 require_once OCPAY_WOOCOMMERCE_PATH . 'includes/class-ocpay-block-support.php';
 
+// Include debug functions in development mode
+if (defined('WP_DEBUG') && WP_DEBUG) {
+    require_once OCPAY_WOOCOMMERCE_PATH . 'includes/debug-functions.php';
+}
+
 // Initialize the gateway after WooCommerce is fully loaded
 add_action('woocommerce_loaded', 'init_ocpay_gateway');
+
+// Early blocks initialization
+add_action('init', function() {
+    if (class_exists('WooCommerce') && class_exists('Automattic\WooCommerce\Blocks\Payments\PaymentMethodRegistry')) {
+        // Ensure blocks support is available early
+        add_action('woocommerce_blocks_payment_method_type_registration', function($payment_method_registry) {
+            if (class_exists('OCPay_Block_Support')) {
+                $payment_method_registry->register(new OCPay_Block_Support());
+                error_log('OCPay: Early registration with blocks payment method registry');
+            }
+        });
+    }
+});
 
 /**
  * Check and log OCPay gateway settings
@@ -424,19 +442,44 @@ add_action('admin_init', function() {
 });
 
 /**
- * Force OCPay gateway to be available
+ * Force OCPay gateway to be available for testing
  */
 function ocpay_force_available_gateway($available_gateways) {
-    if (isset($available_gateways['ocpay'])) {
-        // Force enable the gateway
+    // Only force in development/testing environment
+    if (defined('WP_DEBUG') && WP_DEBUG && isset($available_gateways['ocpay'])) {
+        // Force enable the gateway for testing
         $available_gateways['ocpay']->enabled = 'yes';
         // Log that we're forcing the gateway
         if (function_exists('wc_get_logger')) {
-            wc_get_logger()->debug('OCPay: Forcing gateway to be available', array('source' => 'ocpay-woocommerce'));
+            wc_get_logger()->debug('OCPay: Forcing gateway to be available for testing', array('source' => 'ocpay-woocommerce'));
         }
     }
     return $available_gateways;
 }
+
+/**
+ * Ensure OCPay appears in available gateways even if not fully configured
+ */
+function ocpay_ensure_gateway_visibility($available_gateways) {
+    // Get all registered gateways
+    $all_gateways = WC()->payment_gateways->payment_gateways();
+    
+    // If OCPay is registered but not in available list, add it for testing
+    if (isset($all_gateways['ocpay']) && !isset($available_gateways['ocpay'])) {
+        $gateway = $all_gateways['ocpay'];
+        
+        // Override availability check for testing with block checkout
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            $available_gateways['ocpay'] = $gateway;
+            error_log('OCPay: Added gateway to available list for testing');
+        }
+    }
+    
+    return $available_gateways;
+}
+
+// Apply the filters
+add_filter('woocommerce_available_payment_gateways', 'ocpay_ensure_gateway_visibility', 10, 1);
 
 // Make sure the function is only declared once
 if (!function_exists('ocpay_init_gateway')) {
@@ -664,13 +707,15 @@ function ocpay_woocommerce_missing_notice() {
 
 // Register OCPay as a WooCommerce Blocks payment method
 add_action('woocommerce_blocks_loaded', function() {
-    if (!function_exists('woocommerce_get_blocks_build_dir')) {
-        return;
+    error_log('OCPay: woocommerce_blocks_loaded action triggered');
+    
+    // Initialize blocks support - this handles script enqueuing
+    if (class_exists('OCPay_Block_Support')) {
+        OCPay_Block_Support::init();
+        error_log('OCPay: WooCommerce Blocks support initialized');
     }
     
-    // The payment gateway will automatically be available in blocks
-    // if it's registered with WooCommerce and is_available() returns true
-    error_log('OCPay: WooCommerce Blocks environment detected');
+    error_log('OCPay: WooCommerce Blocks environment detected and configured');
 }, 0);
 
 // Add debug endpoint
@@ -681,6 +726,7 @@ add_action('init', function() {
         }
         
         $gateways = WC()->payment_gateways->payment_gateways();
+        $available_gateways = WC()->payment_gateways->get_available_payment_gateways();
         $ocpay_gateway = isset($gateways['ocpay']) ? $gateways['ocpay'] : null;
         
         if (!$ocpay_gateway) {
@@ -693,6 +739,10 @@ add_action('init', function() {
             'enabled' => $ocpay_gateway->enabled,
             'settings' => $ocpay_gateway->settings,
             'is_available' => $ocpay_gateway->is_available(),
+            'available_gateways' => array_keys($available_gateways),
+            'all_gateways' => array_keys($gateways),
+            'blocks_supported' => class_exists('Automattic\WooCommerce\Blocks\Payments\PaymentMethodRegistry'),
+            'blocks_loaded' => did_action('woocommerce_blocks_loaded'),
             'current_currency' => get_woocommerce_currency(),
             'is_checkout' => is_checkout(),
             'is_admin' => is_admin(),
@@ -707,6 +757,17 @@ add_action('init', function() {
         
         wp_send_json($status);
     }
+});
+
+// Add REST API support for WooCommerce Blocks
+add_action('rest_api_init', function() {
+    // Allow unauthenticated access to payment gateways for blocks
+    add_filter('woocommerce_rest_check_permissions', function($permission, $context, $object_id, $object_type) {
+        if ('read' === $context && ('payment_gateway' === $object_type || 'payment_gateways' === $object_type)) {
+            return true;
+        }
+        return $permission;
+    }, 10, 4);
 });
 
 // Add debug info to checkout page
