@@ -55,12 +55,14 @@ class OCPay_Payment_Gateway extends WC_Payment_Gateway {
 		// Initialize logger
 		$this->logger = OCPay_Logger::get_instance();
 
-		// Initialize API client only if api_key exists
-		$api_key = $this->get_option( 'api_key' );
+		// Initialize API client with the appropriate API key based on API mode
+		$api_mode = $this->get_option( 'api_mode', 'sandbox' );
+		$api_key = ( 'live' === $api_mode ) ? $this->get_option( 'api_key_live' ) : $this->get_option( 'api_key_sandbox' );
+		
 		if ( $api_key ) {
 			$this->api_client = new OCPay_API_Client(
 				$api_key,
-				$this->get_option( 'api_mode' )
+				$api_mode
 			);
 		}
 
@@ -118,7 +120,10 @@ class OCPay_Payment_Gateway extends WC_Payment_Gateway {
 	 * @return bool
 	 */
 	public function validate_fields() {
-		if ( ! $this->get_option( 'api_key' ) ) {
+		$api_mode = $this->get_option( 'api_mode', 'sandbox' );
+		$api_key = ( 'live' === $api_mode ) ? $this->get_option( 'api_key_live' ) : $this->get_option( 'api_key_sandbox' );
+		
+		if ( ! $api_key ) {
 			wc_add_notice( esc_html__( 'OCPay payment gateway is not properly configured. Please contact the store administrator.', 'ocpay-woocommerce' ), 'error' );
 			return false;
 		}
@@ -132,6 +137,10 @@ class OCPay_Payment_Gateway extends WC_Payment_Gateway {
 	 */
 	public function is_available() {
 		try {
+			// Get the appropriate API key based on current mode
+			$api_mode = $this->get_option( 'api_mode', 'sandbox' );
+			$api_key = ( 'live' === $api_mode ) ? $this->get_option( 'api_key_live' ) : $this->get_option( 'api_key_sandbox' );
+			
 			// Enhanced debug information
 			$debug_info = [
 				'time' => current_time('mysql'),
@@ -143,8 +152,8 @@ class OCPay_Payment_Gateway extends WC_Payment_Gateway {
 				'is_checkout' => (function_exists('is_checkout') && is_checkout()) ? 'yes' : 'no',
 				'is_checkout_pay_page' => (function_exists('is_checkout_pay_page') && is_checkout_pay_page()) ? 'yes' : 'no',
 				'current_filter' => current_filter(),
-				'api_key_set' => !empty($this->get_option('api_key')) ? 'yes' : 'no',
-				'api_mode' => $this->get_option('api_mode', 'not set'),
+				'api_key_set' => !empty($api_key) ? 'yes' : 'no',
+				'api_mode' => $api_mode,
 				'wp_debug' => defined('WP_DEBUG') && WP_DEBUG ? 'yes' : 'no',
 			];
 			
@@ -164,7 +173,7 @@ class OCPay_Payment_Gateway extends WC_Payment_Gateway {
 			}
 			
 			// Must have API key configured (relaxed for testing)
-			if ( ! $this->get_option( 'api_key' ) ) {
+			if ( ! $api_key ) {
 				error_log('OCPay: Gateway is NOT available - no API key');
 				
 				// In debug mode, allow gateway even without API key (for testing blocks UI)
@@ -220,23 +229,29 @@ class OCPay_Payment_Gateway extends WC_Payment_Gateway {
 			'api_section'   => array(
 				'title'       => esc_html__( 'API Settings', 'ocpay-woocommerce' ),
 				'type'        => 'title',
-				'description' => esc_html__( 'Configure your OCPay API credentials', 'ocpay-woocommerce' ),
+				'description' => esc_html__( 'Configure your OCPay API credentials for both Sandbox and Production environments', 'ocpay-woocommerce' ),
 			),
-			'api_key'       => array(
-				'title'       => esc_html__( 'API Key', 'ocpay-woocommerce' ),
+			'api_key_sandbox' => array(
+				'title'       => esc_html__( 'Sandbox API Key', 'ocpay-woocommerce' ),
 				'type'        => 'password',
-				'description' => esc_html__( 'Enter your OCPay API key from your merchant dashboard.', 'ocpay-woocommerce' ),
+				'description' => esc_html__( 'Enter your OCPay Sandbox API key from your merchant dashboard. Use this for testing.', 'ocpay-woocommerce' ),
+				'desc_tip'    => true,
+			),
+			'api_key_live'  => array(
+				'title'       => esc_html__( 'Production API Key', 'ocpay-woocommerce' ),
+				'type'        => 'password',
+				'description' => esc_html__( 'Enter your OCPay Production API key from your merchant dashboard. Use this for live transactions.', 'ocpay-woocommerce' ),
 				'desc_tip'    => true,
 			),
 			'api_mode'      => array(
 				'title'       => esc_html__( 'API Mode', 'ocpay-woocommerce' ),
 				'type'        => 'select',
-				'description' => esc_html__( 'Select Sandbox for testing or Live for production.', 'ocpay-woocommerce' ),
+				'description' => esc_html__( 'Select Sandbox (Testing) to use Sandbox API Key, or Production (Live) to use Production API Key.', 'ocpay-woocommerce' ),
 				'default'     => 'sandbox',
 				'desc_tip'    => true,
 				'options'     => array(
 					'sandbox' => esc_html__( 'Sandbox (Testing)', 'ocpay-woocommerce' ),
-					'live'    => esc_html__( 'Live (Production)', 'ocpay-woocommerce' ),
+					'live'    => esc_html__( 'Production (Live)', 'ocpay-woocommerce' ),
 				),
 			),
 			'fee_mode'      => array(
