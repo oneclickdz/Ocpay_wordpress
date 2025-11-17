@@ -100,7 +100,8 @@ class OCPay_WooCommerce {
 	 */
 	private function __construct() {
 		$this->define_constants();
-		// Don't include files here - they're loaded on plugins_loaded
+		// Initialize hooks early to register AJAX handlers
+		$this->init_hooks();
 	}
 
 	/**
@@ -160,6 +161,9 @@ class OCPay_WooCommerce {
 
 		// Load plugin text domain
 		add_action( 'plugins_loaded', array( $this, 'load_textdomain' ) );
+
+		// Register AJAX handlers early on plugins_loaded (before woocommerce_loaded)
+		add_action( 'plugins_loaded', array( $this, 'register_ajax_handlers' ), 5 );
 	}
 
 	/**
@@ -187,10 +191,28 @@ class OCPay_WooCommerce {
 
 		// Register custom cron schedule
 		add_filter( 'cron_schedules', array( $this, 'add_cron_schedules' ) );
+	}
 
-		// AJAX handlers
+	/**
+	 * Register AJAX handlers
+	 *
+	 * @return void
+	 */
+	public function register_ajax_handlers() {
+		// Include required files for AJAX handlers
+		if ( ! class_exists( 'OCPay_Logger' ) ) {
+			require_once OCPAY_WOOCOMMERCE_PATH . 'includes/class-ocpay-logger.php';
+		}
+		if ( ! class_exists( 'OCPay_API_Client' ) ) {
+			require_once OCPAY_WOOCOMMERCE_PATH . 'includes/class-ocpay-validator.php';
+			require_once OCPAY_WOOCOMMERCE_PATH . 'includes/class-ocpay-api-client.php';
+		}
+
+		// AJAX handlers - register for both authenticated users (wp_ajax_) and non-authenticated (wp_ajax_nopriv_)
+		// These handlers check permissions internally, so we register them for both
 		add_action( 'wp_ajax_ocpay_test_connection', array( $this, 'ajax_test_connection' ) );
 		add_action( 'wp_ajax_ocpay_clear_logs', array( $this, 'ajax_clear_logs' ) );
+		add_action( 'wp_ajax_ocpay_manual_check', array( $this, 'ajax_manual_check' ) );
 	}
 
 	/**
@@ -294,25 +316,52 @@ class OCPay_WooCommerce {
 	 * @return void
 	 */
 	public function ajax_test_connection() {
-		check_ajax_referer( 'ocpay_admin_nonce', 'nonce' );
+		// Verify nonce
+		if ( ! isset( $_POST['nonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['nonce'] ) ), 'ocpay_admin_nonce' ) ) {
+			wp_send_json_error( esc_html__( 'Invalid request.', 'ocpay-woocommerce' ) );
+		}
 
 		if ( ! current_user_can( 'manage_woocommerce' ) ) {
 			wp_send_json_error( esc_html__( 'Insufficient permissions.', 'ocpay-woocommerce' ) );
 		}
 
+		// Get the gateway instance to access its settings
+		if ( ! class_exists( 'WooCommerce' ) ) {
+			wp_send_json_error( esc_html__( 'WooCommerce not loaded.', 'ocpay-woocommerce' ) );
+		}
+
+		$gateways = WC()->payment_gateways->payment_gateways();
+		if ( ! isset( $gateways['ocpay'] ) ) {
+			wp_send_json_error( esc_html__( 'OCPay gateway not found.', 'ocpay-woocommerce' ) );
+		}
+
+		$gateway = $gateways['ocpay'];
+		$api_mode = $gateway->get_option( 'api_mode', 'sandbox' );
+		$api_key = ( 'live' === $api_mode ) 
+			? $gateway->get_option( 'api_key_live' )
+			: $gateway->get_option( 'api_key_sandbox' );
+
+		if ( empty( $api_key ) ) {
+			wp_send_json_error( esc_html__( 'API key not configured.', 'ocpay-woocommerce' ) );
+		}
+
 		// Get API client
-		$api_client = new OCPay_API_Client(
-			get_option( 'woocommerce_ocpay_api_key' ),
-			get_option( 'woocommerce_ocpay_api_mode' )
-		);
+		$api_client = new OCPay_API_Client( $api_key, $api_mode );
 
 		$result = $api_client->test_connection();
 
 		if ( is_wp_error( $result ) ) {
-			wp_send_json_error( $result->get_error_message() );
+			$error_message = $result->get_error_message();
+			// Provide more specific error messages for common issues
+			if ( empty( $error_message ) || $error_message === 'Unknown error' ) {
+				$error_message = esc_html__( 'API request failed. Please check your API key and try again.', 'ocpay-woocommerce' );
+			}
+			wp_send_json_error( $error_message );
 		}
 
-		wp_send_json_success( $result );
+		// Success response
+		$message = isset( $result['message'] ) ? $result['message'] : esc_html__( 'API connection successful!', 'ocpay-woocommerce' );
+		wp_send_json_success( array( 'message' => $message ) );
 	}
 
 	/**
@@ -321,7 +370,10 @@ class OCPay_WooCommerce {
 	 * @return void
 	 */
 	public function ajax_clear_logs() {
-		check_ajax_referer( 'ocpay_admin_nonce', 'nonce' );
+		// Verify nonce
+		if ( ! isset( $_POST['nonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['nonce'] ) ), 'ocpay_admin_nonce' ) ) {
+			wp_send_json_error( esc_html__( 'Invalid request.', 'ocpay-woocommerce' ) );
+		}
 
 		if ( ! current_user_can( 'manage_woocommerce' ) ) {
 			wp_send_json_error( esc_html__( 'Insufficient permissions.', 'ocpay-woocommerce' ) );
@@ -333,6 +385,46 @@ class OCPay_WooCommerce {
 		wp_send_json_success( array(
 			'message' => esc_html__( 'Logs cleared successfully.', 'ocpay-woocommerce' ),
 		) );
+	}
+
+	/**
+	 * AJAX handler for manual status check
+	 *
+	 * @return void
+	 */
+	public function ajax_manual_check() {
+		// Verify nonce
+		if ( ! isset( $_POST['nonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['nonce'] ) ), 'ocpay_admin_nonce' ) ) {
+			wp_send_json_error( esc_html__( 'Invalid request.', 'ocpay-woocommerce' ) );
+		}
+
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			wp_send_json_error( esc_html__( 'Insufficient permissions.', 'ocpay-woocommerce' ) );
+		}
+
+		// Load required classes if not already loaded
+		if ( ! class_exists( 'OCPay_Status_Checker' ) ) {
+			$status_checker_file = OCPAY_WOOCOMMERCE_PATH . 'includes/class-ocpay-status-checker.php';
+			if ( file_exists( $status_checker_file ) ) {
+				require_once $status_checker_file;
+			}
+		}
+
+		// Trigger status check
+		if ( class_exists( 'OCPay_Status_Checker' ) ) {
+			try {
+				$checker = OCPay_Status_Checker::get_instance();
+				$checker->check_pending_payments();
+				
+				wp_send_json_success( array(
+					'message' => esc_html__( 'Payment status check completed. Check logs for details.', 'ocpay-woocommerce' ),
+				) );
+			} catch ( Exception $e ) {
+				wp_send_json_error( esc_html__( 'Error during status check: ', 'ocpay-woocommerce' ) . $e->getMessage() );
+			}
+		} else {
+			wp_send_json_error( esc_html__( 'Status checker not available.', 'ocpay-woocommerce' ) );
+		}
 	}
 
 	/**
@@ -387,6 +479,19 @@ require_once OCPAY_WOOCOMMERCE_PATH . 'includes/class-ocpay-security.php';
 if (defined('WP_DEBUG') && WP_DEBUG) {
     require_once OCPAY_WOOCOMMERCE_PATH . 'includes/debug-functions.php';
 }
+
+// Initialize the OCPay_WooCommerce class early on plugins_loaded to register AJAX handlers
+add_action( 'plugins_loaded', function() {
+	// Include the main class if not already included
+	if ( ! class_exists( 'OCPay_WooCommerce' ) ) {
+		// The class is defined inline in this file, so it's already available
+	}
+	
+	// Instantiate the main plugin class
+	if ( class_exists( 'OCPay_WooCommerce' ) ) {
+		OCPay_WooCommerce::get_instance();
+	}
+}, 5 );
 
 // Initialize the gateway after WooCommerce is fully loaded
 add_action('woocommerce_loaded', 'init_ocpay_gateway');
@@ -691,7 +796,8 @@ function init_ocpay_gateway() {
         'class-ocpay-api-client.php',
         'class-ocpay-payment-gateway.php',
         'class-ocpay-settings.php',
-        'class-ocpay-order-handler.php'
+        'class-ocpay-order-handler.php',
+        'class-ocpay-status-checker.php'
     );
     
     foreach ($files as $file) {

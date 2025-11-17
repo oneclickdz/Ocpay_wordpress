@@ -331,17 +331,35 @@ class OCPay_API_Client {
 	public function test_connection() {
 		$this->logger->info( 'Testing API connection' );
 
-		// Try to get a simple endpoint response
-		$response = $this->make_request( 'GET', '/ocpay/checkPayment/test-ref', array() );
+		// Use a minimal test request that doesn't require valid payment data
+		// We'll use a dummy payment ref - if the API responds (even with an error),
+		// it means the connection and authentication are working
+		$response = $this->make_request( 'GET', '/ocpay/checkPayment/test-connection-check', array() );
 
 		if ( is_wp_error( $response ) ) {
-			// Even if payment ref is invalid, if we got a response from API, connection is working
-			if ( strpos( $response->get_error_message(), 'API request failed' ) === false ) {
+			$error_code = $response->get_error_code();
+			$error_message = $response->get_error_message();
+			
+			// If it's a network error or auth error, fail the test
+			if ( strpos( $error_code, 'api_error_401' ) !== false ||
+				 strpos( $error_code, 'api_error_403' ) !== false ||
+				 strpos( $error_message, 'API request failed' ) !== false ||
+				 strpos( $error_message, 'Unauthorized' ) !== false ||
+				 strpos( $error_message, 'token' ) !== false ) {
+				return $response;
+			}
+			
+			// For 400 Bad Request (invalid payment ref) or other API errors, connection is OK
+			// This means we reached the API and were authenticated
+			if ( strpos( $error_code, 'api_error_400' ) !== false ||
+				 strpos( $error_code, 'api_error_404' ) !== false ) {
 				return array(
 					'success' => true,
 					'message' => esc_html__( 'API connection successful!', 'ocpay-woocommerce' ),
 				);
 			}
+			
+			// For any other error, return it
 			return $response;
 		}
 

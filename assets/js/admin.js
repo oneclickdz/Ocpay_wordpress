@@ -88,6 +88,51 @@
             });
         });
 
+        // Manual status check button
+        $('#ocpay-manual-check').on('click', function (e) {
+            e.preventDefault();
+
+            const $btn = $(this);
+            const $result = $('#ocpay-check-result');
+            const $spinner = $('#ocpay-check-spinner');
+            const nonce = $btn.data('nonce');
+            const originalText = $btn.text();
+
+            $btn.prop('disabled', true).text('Checking...');
+            $spinner.css('visibility', 'visible');
+            $result.html('');
+
+            $.ajax({
+                url: ajaxurl,
+                method: 'POST',
+                data: {
+                    action: 'ocpay_manual_check',
+                    nonce: nonce,
+                },
+                success: function (response) {
+                    if (response.success) {
+                        showResult($result, 'success', '✓ ' + response.data.message);
+                        $btn.text('✓ Completed').css('color', 'green');
+                        setTimeout(function () {
+                            location.reload();
+                        }, 2000);
+                    } else {
+                        showResult($result, 'error', '✗ ' + response.data);
+                    }
+                },
+                error: function (xhr, status, error) {
+                    showResult($result, 'error', '✗ Error: ' + error);
+                },
+                complete: function () {
+                    $spinner.css('visibility', 'hidden');
+                    $btn.prop('disabled', false);
+                    setTimeout(function () {
+                        $btn.text(originalText).css('color', '');
+                    }, 3000);
+                },
+            });
+        });
+
         // Helper function to display result messages
         function showResult($container, type, message) {
             const className = type === 'success' ? 'ocpay-status-success' : 'ocpay-status-error';

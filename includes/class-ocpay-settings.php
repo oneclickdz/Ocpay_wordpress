@@ -77,19 +77,31 @@ class OCPay_Settings {
 			wp_die( esc_html__( 'You do not have permission to access this page.', 'ocpay-woocommerce' ) );
 		}
 
-		?>
-		<div class="wrap">
-			<h1><?php esc_html_e( 'OCPay Settings', 'ocpay-woocommerce' ); ?></h1>
-			
-			<div class="notice notice-info">
-				<p><?php esc_html_e( 'OCPay settings are configured in WooCommerce > Settings > Payments > OCPay', 'ocpay-woocommerce' ); ?></p>
-			</div>
+		try {
+			?>
+			<div class="wrap">
+				<h1><?php esc_html_e( 'OCPay Settings', 'ocpay-woocommerce' ); ?></h1>
+				
+				<div class="notice notice-info">
+					<p><?php esc_html_e( 'OCPay settings are configured in WooCommerce > Settings > Payments > OCPay', 'ocpay-woocommerce' ); ?></p>
+				</div>
 
-			<div id="ocpay-dashboard" class="ocpay-dashboard">
-				<?php $this->render_dashboard(); ?>
+				<div id="ocpay-dashboard" class="ocpay-dashboard">
+					<?php $this->render_dashboard(); ?>
+				</div>
 			</div>
-		</div>
-		<?php
+			<?php
+		} catch ( Exception $e ) {
+			?>
+			<div class="wrap">
+				<h1><?php esc_html_e( 'OCPay Settings', 'ocpay-woocommerce' ); ?></h1>
+				<div class="notice notice-error">
+					<p><?php esc_html_e( 'An error occurred while loading the settings page. Please check your WordPress error log for details.', 'ocpay-woocommerce' ); ?></p>
+					<p><?php echo esc_html( $e->getMessage() ); ?></p>
+				</div>
+			</div>
+			<?php
+		}
 	}
 
 	/**
@@ -98,9 +110,27 @@ class OCPay_Settings {
 	 * @return void
 	 */
 	private function render_dashboard() {
-		$logger = OCPay_Logger::get_instance();
-		$api_key = get_option( 'woocommerce_ocpay_api_key' );
-		$api_configured = ! empty( $api_key );
+		try {
+			$logger = OCPay_Logger::get_instance();
+		} catch ( Exception $e ) {
+			$logger = null;
+		}
+		
+		// Get the gateway instance to access its settings
+		$api_configured = false;
+		try {
+			if ( class_exists( 'WooCommerce' ) ) {
+				$gateways = WC()->payment_gateways->payment_gateways();
+				if ( isset( $gateways['ocpay'] ) ) {
+					$gateway = $gateways['ocpay'];
+					$api_key_sandbox = $gateway->get_option( 'api_key_sandbox' );
+					$api_key_live = $gateway->get_option( 'api_key_live' );
+					$api_configured = ! empty( $api_key_sandbox ) || ! empty( $api_key_live );
+				}
+			}
+		} catch ( Exception $e ) {
+			$api_configured = false;
+		}
 		?>
 		<div class="ocpay-grid">
 			<div class="ocpay-card">
@@ -157,6 +187,53 @@ class OCPay_Settings {
 			</div>
 
 			<div class="ocpay-card">
+				<h2><?php esc_html_e( 'Order Status Polling', 'ocpay-woocommerce' ); ?></h2>
+				<?php
+				// Get cron status
+				$next_event = wp_next_scheduled( 'wp_scheduled_event_ocpay_check_payment_status' );
+
+				// Safe pending orders lookup
+				$pending_status = $this->get_pending_orders_status();
+				$pending_count  = isset( $pending_status['count'] ) ? (int) $pending_status['count'] : 0;
+				$pending_error  = isset( $pending_status['error'] ) ? $pending_status['error'] : '';
+				?>
+				<table class="form-table">
+					<tr>
+						<th><?php esc_html_e( 'Cron Status', 'ocpay-woocommerce' ); ?></th>
+						<td>
+							<?php 
+								if ( $next_event ) {
+									$time_until = $next_event - time();
+									$minutes_until = round( $time_until / 60 );
+									echo '<span class="ocpay-status-success">✓ ' . esc_html__( 'Scheduled', 'ocpay-woocommerce' ) . '</span>';
+									echo '<br><small>' . sprintf( esc_html__( 'Next run in %d minutes', 'ocpay-woocommerce' ), abs( $minutes_until ) ) . '</small>';
+								} else {
+									echo '<span class="ocpay-status-error">✗ ' . esc_html__( 'Not Scheduled', 'ocpay-woocommerce' ) . '</span>';
+									echo '<br><small>' . esc_html__( 'Deactivate and reactivate the plugin to reschedule', 'ocpay-woocommerce' ) . '</small>';
+								}
+							?>
+						</td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Pending Orders', 'ocpay-woocommerce' ); ?></th>
+						<td>
+							<?php echo esc_html( $pending_count ); ?>
+							<?php if ( $pending_error ) : ?>
+								<br><small class="ocpay-status-error"><?php echo esc_html( $pending_error ); ?></small>
+							<?php endif; ?>
+						</td>
+					</tr>
+				</table>
+				<p>
+					<button type="button" class="button button-primary" id="ocpay-manual-check" data-nonce="<?php echo esc_attr( wp_create_nonce( 'ocpay_admin_nonce' ) ); ?>">
+						<?php esc_html_e( 'Check Pending Orders Now', 'ocpay-woocommerce' ); ?>
+					</button>
+					<span class="spinner" id="ocpay-check-spinner" style="float: none; margin: 0 10px; visibility: hidden;"></span>
+				</p>
+				<div id="ocpay-check-result" style="margin-top: 15px;"></div>
+			</div>
+
+			<div class="ocpay-card">
 				<h2><?php esc_html_e( 'Activity Logs', 'ocpay-woocommerce' ); ?></h2>
 				<p>
 					<button type="button" class="button button-secondary" id="ocpay-clear-logs" data-nonce="<?php echo esc_attr( wp_create_nonce( 'ocpay_admin_nonce' ) ); ?>">
@@ -164,7 +241,13 @@ class OCPay_Settings {
 					</button>
 				</p>
 				<textarea readonly style="width: 100%; height: 300px; font-family: monospace; font-size: 12px; border: 1px solid #ddd; padding: 10px; border-radius: 4px; background-color: #f5f5f5;">
-<?php echo esc_textarea( $logger->get_logs() ); ?>
+<?php 
+	if ( $logger ) {
+		echo esc_textarea( $logger->get_logs() );
+	} else {
+		esc_html_e( 'Logs are currently unavailable.', 'ocpay-woocommerce' );
+	}
+?>
 				</textarea>
 			</div>
 		</div>
@@ -182,20 +265,92 @@ class OCPay_Settings {
 			return;
 		}
 
-		wp_enqueue_style(
-			'ocpay-admin',
-			OCPAY_WOOCOMMERCE_URL . 'assets/css/admin.css',
-			array(),
-			OCPAY_WOOCOMMERCE_VERSION
-		);
+		$css_url = OCPAY_WOOCOMMERCE_URL . 'assets/css/admin.css';
+		$js_url = OCPAY_WOOCOMMERCE_URL . 'assets/js/admin.js';
+		
+		// Check if files exist before enqueuing
+		if ( file_exists( OCPAY_WOOCOMMERCE_PATH . 'assets/css/admin.css' ) ) {
+			wp_enqueue_style(
+				'ocpay-admin',
+				$css_url,
+				array(),
+				OCPAY_WOOCOMMERCE_VERSION
+			);
+		}
 
-		wp_enqueue_script(
-			'ocpay-admin',
-			OCPAY_WOOCOMMERCE_URL . 'assets/js/admin.js',
-			array( 'jquery' ),
-			OCPAY_WOOCOMMERCE_VERSION,
-			true
-		);
+		if ( file_exists( OCPAY_WOOCOMMERCE_PATH . 'assets/js/admin.js' ) ) {
+			wp_enqueue_script(
+				'ocpay-admin',
+				$js_url,
+				array( 'jquery' ),
+				OCPAY_WOOCOMMERCE_VERSION,
+				true
+			);
+		}
+	}
+
+	/**
+	 * Safely get pending OCPay orders count with fallbacks and error reporting.
+	 *
+	 * @return array { 'count' => int, 'error' => string }
+	 */
+	private function get_pending_orders_status() {
+		$logger = null;
+		try {
+			$logger = OCPay_Logger::get_instance();
+		} catch ( \Throwable $e ) {
+			// Ignore logger failure
+		}
+
+		$result = array( 'count' => 0 );
+
+		// Bail early if WooCommerce not loaded
+		if ( ! class_exists( 'WooCommerce' ) ) {
+			$result['error'] = __( 'WooCommerce not loaded.', 'ocpay-woocommerce' );
+			return $result;
+		}
+
+		try {
+			// Preferred: wc_get_orders (HPOS compatible)
+			if ( function_exists( 'wc_get_orders' ) ) {
+				$args  = array(
+					'limit'    => -1,
+					'status'   => array( 'pending' ),
+					'return'   => 'ids',
+					// Filter by meta to ensure it's an OCPay order
+					'meta_key' => '_ocpay_payment_ref',
+					'orderby'  => 'date',
+					'order'    => 'DESC',
+				);
+				$orders = wc_get_orders( $args );
+				$result['count'] = is_array( $orders ) ? count( $orders ) : 0;
+			} elseif ( class_exists( 'WC_Order_Query' ) ) {
+				// Fallback to WC_Order_Query
+				$query_args = array(
+					'limit'      => -1,
+					'status'     => 'pending',
+					'return'     => 'ids',
+					'meta_query' => array(
+						array(
+							'key'     => '_ocpay_payment_ref',
+							'compare' => 'EXISTS',
+						),
+					),
+				);
+				$query          = new WC_Order_Query( $query_args );
+				$pending_orders = $query->get_posts();
+				$result['count'] = is_array( $pending_orders ) ? count( $pending_orders ) : 0;
+			} else {
+				$result['error'] = __( 'Order query class unavailable.', 'ocpay-woocommerce' );
+			}
+		} catch ( \Throwable $e ) {
+			$result['error'] = __( 'Could not load pending orders.', 'ocpay-woocommerce' );
+			if ( $logger ) {
+				$logger->error( 'Pending orders lookup failed', array( 'message' => $e->getMessage() ) );
+			}
+		}
+
+		return $result;
 	}
 }
 

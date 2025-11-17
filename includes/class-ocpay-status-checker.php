@@ -84,15 +84,30 @@ class OCPay_Status_Checker {
 	 * @return void
 	 */
 	private function init_api_client() {
-		$gateway_settings = get_option( 'woocommerce_ocpay_settings', array() );
-		$api_mode = isset( $gateway_settings['api_mode'] ) ? $gateway_settings['api_mode'] : 'sandbox';
+		// Get the OCPay gateway instance to access its settings
+		if ( ! class_exists( 'WooCommerce' ) ) {
+			return;
+		}
+
+		// Retrieve gateway settings from WooCommerce
+		$gateways = WC()->payment_gateways->payment_gateways();
+		$gateway = isset( $gateways['ocpay'] ) ? $gateways['ocpay'] : null;
 		
+		if ( ! $gateway ) {
+			$this->logger->warning( 'OCPay gateway not found for status checker initialization' );
+			return;
+		}
+
+		// Get API mode and key from gateway
+		$api_mode = $gateway->get_option( 'api_mode', 'sandbox' );
 		$api_key = ( 'live' === $api_mode ) 
-			? ( isset( $gateway_settings['api_key_live'] ) ? $gateway_settings['api_key_live'] : '' )
-			: ( isset( $gateway_settings['api_key_sandbox'] ) ? $gateway_settings['api_key_sandbox'] : '' );
+			? $gateway->get_option( 'api_key_live' )
+			: $gateway->get_option( 'api_key_sandbox' );
 
 		if ( ! empty( $api_key ) ) {
 			$this->api_client = new OCPay_API_Client( $api_key, $api_mode );
+		} else {
+			$this->logger->warning( 'OCPay API key not configured for status checker' );
 		}
 	}
 
@@ -104,6 +119,14 @@ class OCPay_Status_Checker {
 	 * @return void
 	 */
 	public function check_pending_payments() {
+		// Reinitialize API client on each run to ensure fresh credentials
+		$this->init_api_client();
+
+		if ( ! $this->api_client ) {
+			$this->logger->error( 'Cannot check pending payments: API client not initialized' );
+			return;
+		}
+
 		// Check if already running to prevent overlaps
 		$lock_key = 'ocpay_payment_check_lock';
 		$lock_value = get_transient( $lock_key );
@@ -298,10 +321,15 @@ class OCPay_Status_Checker {
 		}
 
 		// Get configured success status from gateway settings
-		$gateway_settings = get_option( 'woocommerce_ocpay_settings', array() );
-		$success_status = isset( $gateway_settings['order_status_after_payment'] ) 
-			? $gateway_settings['order_status_after_payment']
-			: 'processing';
+		$gateways = WC()->payment_gateways->payment_gateways();
+		$gateway = isset( $gateways['ocpay'] ) ? $gateways['ocpay'] : null;
+		
+		if ( ! $gateway ) {
+			$this->logger->warning( 'OCPay gateway not found when updating order status', array( 'order_id' => $order_id ) );
+			$success_status = 'processing';
+		} else {
+			$success_status = $gateway->get_option( 'order_status_after_payment', 'processing' );
+		}
 
 		// Ensure it's one of the valid options
 		if ( ! in_array( $success_status, array( 'completed', 'processing' ), true ) ) {
