@@ -1,0 +1,151 @@
+name: Release Plugin
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: 'patch'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Get current version
+        id: get_version
+        run: |
+          CURRENT_VERSION=$(grep -oP "Version:\s*\K[\d.]+" ocpay-woocommerce.php)
+          echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          echo "Current version: $CURRENT_VERSION"
+
+      - name: Calculate new version
+        id: calc_version
+        run: |
+          CURRENT_VERSION="${{ steps.get_version.outputs.current_version }}"
+          BUMP_TYPE="${{ inputs.version_bump }}"
+
+          IFS='.' read -r -a version_parts <<< "$CURRENT_VERSION"
+          major="${version_parts[0]}"
+          minor="${version_parts[1]}"
+          patch="${version_parts[2]}"
+
+          if [ "$BUMP_TYPE" == "major" ]; then
+            major=$((major + 1))
+            minor=0
+            patch=0
+          elif [ "$BUMP_TYPE" == "minor" ]; then
+            minor=$((minor + 1))
+            patch=0
+          else
+            patch=$((patch + 1))
+          fi
+
+          NEW_VERSION="$major.$minor.$patch"
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "New version: $NEW_VERSION"
+
+      - name: Update version in files
+        run: |
+          NEW_VERSION="${{ steps.calc_version.outputs.new_version }}"
+          CURRENT_VERSION="${{ steps.get_version.outputs.current_version }}"
+
+          # Update version in main plugin file
+          sed -i "s/Version: $CURRENT_VERSION/Version: $NEW_VERSION/" ocpay-woocommerce.php
+          sed -i "s/OCPAY_WOOCOMMERCE_VERSION', '$CURRENT_VERSION'/OCPAY_WOOCOMMERCE_VERSION', '$NEW_VERSION'/" ocpay-woocommerce.php
+
+          # Update version in composer.json
+          sed -i "s/\"version\": \"$CURRENT_VERSION\"/\"version\": \"$NEW_VERSION\"/" composer.json
+
+          echo "Updated version from $CURRENT_VERSION to $NEW_VERSION"
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add ocpay-woocommerce.php composer.json
+          git commit -m "chore: bump version to ${{ steps.calc_version.outputs.new_version }}"
+          git push
+
+      - name: Create plugin zip
+        run: |
+          NEW_VERSION="${{ steps.calc_version.outputs.new_version }}"
+          ZIP_NAME="ocpay-woocommerce-$NEW_VERSION.zip"
+
+          # Create a temporary directory for the plugin
+          mkdir -p /tmp/ocpay-woocommerce
+
+          # Build rsync exclude arguments from .distignore
+          EXCLUDE_ARGS=""
+          if [ -f .distignore ]; then
+            while IFS= read -r pattern; do
+              # Skip empty lines and comments
+              [[ -z "$pattern" || "$pattern" =~ ^# ]] && continue
+              # Handle negation patterns (lines starting with !)
+              if [[ "$pattern" =~ ^! ]]; then
+                continue  # rsync doesn't support negation in exclude, so we skip these
+              fi
+              EXCLUDE_ARGS="$EXCLUDE_ARGS --exclude=$pattern"
+            done < .distignore
+          fi
+
+          # Copy plugin files using rsync with exclusions from .distignore
+          rsync -av $EXCLUDE_ARGS ./ /tmp/ocpay-woocommerce/
+
+          # Create zip file
+          cd /tmp
+          zip -r "/tmp/$ZIP_NAME" ocpay-woocommerce/
+
+          # Move zip to workspace
+          mv "/tmp/$ZIP_NAME" "$GITHUB_WORKSPACE/"
+
+          echo "zip_file=$ZIP_NAME" >> $GITHUB_ENV
+          echo "Created $ZIP_NAME"
+
+      - name: Create Git tag
+        run: |
+          NEW_VERSION="${{ steps.calc_version.outputs.new_version }}"
+          git tag -a "v$NEW_VERSION" -m "Release version $NEW_VERSION"
+          git push origin "v$NEW_VERSION"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.calc_version.outputs.new_version }}
+          name: Release v${{ steps.calc_version.outputs.new_version }}
+          body: |
+            ## OCPay for WooCommerce v${{ steps.calc_version.outputs.new_version }}
+
+            Auto-generated release with version bump: ${{ inputs.version_bump }}
+
+            ### Installation
+            1. Download the `ocpay-woocommerce-${{ steps.calc_version.outputs.new_version }}.zip` file
+            2. Go to WordPress Admin → Plugins → Add New → Upload Plugin
+            3. Upload the zip file and activate the plugin
+
+            ### Changes
+            - Version bumped from ${{ steps.get_version.outputs.current_version }} to ${{ steps.calc_version.outputs.new_version }}
+          files: |
+            ocpay-woocommerce-${{ steps.calc_version.outputs.new_version }}.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
