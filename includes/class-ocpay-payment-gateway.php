@@ -400,15 +400,13 @@ class OCPay_Payment_Gateway extends WC_Payment_Gateway {
 	}
 
 	/**
-	 * Schedule simple self-calling check (like setTimeout)
+	 * Start background polling (no cron, uses sleep)
 	 *
 	 * @return void
 	 */
 	private function schedule_payment_polling() {
-		if ( ! wp_next_scheduled( 'ocpay_check_pending_payments' ) ) {
-			wp_schedule_single_event( time() + 60, 'ocpay_check_pending_payments' );
-			$this->logger->info( 'Scheduled payment check in 60s' );
-		}
+		ocpay_start_payment_polling();
+		$this->logger->info( 'Started background payment polling' );
 	}
 
 	/**

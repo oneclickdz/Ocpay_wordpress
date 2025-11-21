@@ -37,30 +37,52 @@ if ( ! defined( 'OCPAY_WOOCOMMERCE_BASENAME' ) ) {
 	define( 'OCPAY_WOOCOMMERCE_BASENAME', plugin_basename( __FILE__ ) );
 }
 
-// Simple self-calling check - like setTimeout, calls itself if pending orders exist
-add_action( 'ocpay_check_pending_payments', 'ocpay_check_pending_payments' );
-function ocpay_check_pending_payments() {
-	if ( ! class_exists( 'OCPay_Status_Checker' ) || ! class_exists( 'WC_Order_Query' ) ) {
-		return;
+// Background polling with debounce - uses sleep, no cron/scheduling
+function ocpay_start_payment_polling() {
+	// Debounce: Check if already running
+	$is_running = get_transient( 'ocpay_polling_running' );
+	if ( $is_running ) {
+		return; // Already running, skip
 	}
 
-	// Check pending payments
-	OCPay_Status_Checker::get_instance()->check_pending_payments();
+	// Set running flag (expires in 5 minutes as safety)
+	set_transient( 'ocpay_polling_running', true, 300 );
 
-	// Check if still have pending orders
-	$query = new WC_Order_Query( array(
-		'limit'          => 1,
-		'status'         => 'pending',
-		'payment_method' => 'ocpay',
-		'date_created'   => '>=' . strtotime( '-30 days' ),
-		'meta_query'     => array( array( 'key' => '_ocpay_payment_ref', 'compare' => 'EXISTS' ) ),
-		'return'         => 'ids',
-	) );
-
-	// If still pending, call itself again in 1 minute
-	if ( ! empty( $query->get_orders() ) ) {
-		wp_schedule_single_event( time() + 60, 'ocpay_check_pending_payments' );
+	// Run in background without blocking response
+	if ( function_exists( 'fastcgi_finish_request' ) ) {
+		fastcgi_finish_request();
 	}
+
+	// Loop: check pending, sleep 60s, repeat until no pending
+	while ( true ) {
+		if ( ! class_exists( 'OCPay_Status_Checker' ) || ! class_exists( 'WC_Order_Query' ) ) {
+			break;
+		}
+
+		// Check all pending payments
+		OCPay_Status_Checker::get_instance()->check_pending_payments();
+
+		// Check if still have pending orders
+		$query = new WC_Order_Query( array(
+			'limit'          => 1,
+			'status'         => 'pending',
+			'payment_method' => 'ocpay',
+			'date_created'   => '>=' . strtotime( '-30 days' ),
+			'meta_query'     => array( array( 'key' => '_ocpay_payment_ref', 'compare' => 'EXISTS' ) ),
+			'return'         => 'ids',
+		) );
+
+		// No pending orders? Stop loop
+		if ( empty( $query->get_orders() ) ) {
+			break;
+		}
+
+		// Sleep 60 seconds before next check
+		sleep( 60 );
+	}
+
+	// Clear running flag
+	delete_transient( 'ocpay_polling_running' );
 }
 
 // Declare HPOS compatibility early
@@ -84,8 +106,8 @@ register_activation_hook( __FILE__, function() {
 } );
 
 register_deactivation_hook( __FILE__, function() {
-	// Clear all scheduled events
-	wp_clear_scheduled_hook( 'ocpay_check_pending_payments' );
+	// Clear polling flag if running
+	delete_transient( 'ocpay_polling_running' );
 	flush_rewrite_rules();
 } );
 
