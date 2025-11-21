@@ -95,11 +95,12 @@
    - Failed payments marked as "On Hold" for manual review
    - Automatic order status updates via payment confirmation
 
-3. **Simple On-Demand Status Checking**
-   - Checks payment status when customer returns to site
-   - Status refreshed when viewing order page
+3. **Hybrid Status Checking (Smart & Automatic)**
+   - Automatic 1-minute polling when there are pending payments
+   - Auto-stops polling when no pending payments (saves resources)
+   - Checks on-demand when customer returns or views orders
    - Manual check available for admins (up to 50 orders)
-   - No background cron jobs - simpler and more efficient
+   - Guarantees validation even if customer doesn't return
 
 4. **WooCommerce Blocks Support**
    - Compatible with latest WooCommerce block checkout
@@ -279,11 +280,39 @@ PENDING → Continue polling
 
 ### Overview
 
-OCPay payments require asynchronous confirmation through the SATIM banking system. The plugin implements simple on-demand status checking to verify payment confirmation when customers interact with their orders.
+OCPay payments require asynchronous confirmation through the SATIM banking system. The plugin uses a **hybrid approach** combining simple on-demand checking with intelligent automatic polling:
+
+1. **On-Demand Checking**: When customers interact with their orders
+2. **Smart 1-Minute Polling**: Automatically when there are pending payments
+3. **Auto-Stop**: Polling stops when no pending payments remain
+
+This ensures payment validation even if customers don't return, while keeping server load minimal.
 
 ### Checking Methods
 
-#### 1. Thank You Page Check (Automatic)
+#### 1. Smart Automatic Polling (Every 1 Minute)
+
+**Trigger**: Automatically when payment link is created
+
+**What Checks**:
+- All pending OCPay orders with payment references
+
+**Process**:
+1. Customer creates order and is redirected to OCPay
+2. Plugin schedules 1-minute polling automatically
+3. Polling checks all pending payments every 60 seconds
+4. Orders updated when payment confirmed
+5. Polling automatically stops when no pending payments
+
+**Benefits**:
+- Guarantees payment validation even if customer doesn't return
+- Catches payments made from mobile devices
+- Auto-stops to save server resources
+- Auto-restarts on next payment
+
+**Schedule**: Every 1 minute (only when pending payments exist)
+
+#### 2. Thank You Page Check (Automatic)
 
 **Trigger**: When customer returns from OCPay payment page
 
@@ -304,7 +333,7 @@ OCPay payments require asynchronous confirmation through the SATIM banking syste
 
 **Hook**: `woocommerce_thankyou`
 
-#### 2. Order View Page Check (Automatic)
+#### 3. Order View Page Check (Automatic)
 
 **Trigger**: When customer or admin views an order page
 
@@ -322,7 +351,7 @@ OCPay payments require asynchronous confirmation through the SATIM banking syste
 
 **Hook**: `woocommerce_view_order`
 
-#### 3. Manual Admin Check
+#### 4. Manual Admin Check
 
 **Trigger**: Admin clicks "Manual Check" button in settings
 
@@ -338,7 +367,7 @@ OCPay payments require asynchronous confirmation through the SATIM banking syste
 - Limited to 50 orders to prevent timeout
 - Can be triggered anytime by admin
 
-**Note**: This replaces the old automatic cron-based polling that ran every 20 minutes
+**Note**: The 1-minute automatic polling usually handles everything, so manual checks are rarely needed
 
 ### Payment Status Values
 
@@ -352,13 +381,18 @@ The OCPay API returns one of three statuses:
 
 ### When Status is Checked
 
-| Trigger | When It Happens | What Gets Checked |
-|---------|----------------|-------------------|
-| Thank You Page | Customer returns from OCPay | That specific order only |
-| Order View Page | Customer/admin views order | That specific order if pending |
-| Manual Admin Check | Admin clicks check button | Up to 50 most recent pending orders |
+| Trigger | When It Happens | What Gets Checked | Frequency |
+|---------|----------------|-------------------|-----------|
+| **Automatic Polling** | Payment link created | All pending orders | Every 1 minute (auto-stops when none pending) |
+| **Thank You Page** | Customer returns from OCPay | That specific order | Once on page load |
+| **Order View Page** | Customer/admin views order | That specific order if pending | Once on page load |
+| **Manual Admin Check** | Admin clicks check button | Up to 50 most recent pending orders | On-demand |
 
-**Note**: This approach is simpler and more efficient than the old cron-based polling that ran every 20 minutes regardless of activity.
+**Benefits of Hybrid Approach**:
+- Automatic polling ensures validation even if customer doesn't return
+- On-demand checks provide immediate feedback when customer interacts
+- Auto-stop mechanism prevents wasted server resources
+- Much simpler than old 20-minute cron system
 
 ### Monitoring Status Checks
 
@@ -1242,19 +1276,22 @@ For detailed documentation, see [.github/WORKFLOW_DOCS.md](.github/WORKFLOW_DOCS
 
 ### Version 1.2.1 (Current)
 
-**Major Simplification**:
-- Removed complex cron-based polling system
-- Replaced with simple on-demand status checking
-- Status checked on thank you page (when customer returns)
-- Status checked on order view page (when customer views order)
-- Manual admin check for up to 50 most recent pending orders
+**Major Improvement - Hybrid Approach**:
+- Removed complex 20-minute cron-based polling system
+- Implemented intelligent hybrid checking approach:
+  - **Automatic 1-minute polling** when there are pending payments
+  - **Auto-stop mechanism** when no pending payments (saves resources)
+  - **On-demand checking** when customer returns or views orders
+  - **Manual admin check** for up to 50 most recent pending orders
+- Guarantees payment validation even if customer doesn't return
 - Much simpler architecture and easier to understand
 
-**Benefits of Simplification**:
-- No background cron jobs consuming server resources
+**Benefits of Hybrid Approach**:
+- Automatic polling ensures no missed payments
+- Auto-stop mechanism prevents wasted resources
 - Status updates happen when they matter (when customer interacts)
 - Easier to debug and maintain
-- Follows best practices from similar payment gateways
+- Best of both worlds: simplicity + reliability
 - Reduced complexity without losing functionality
 
 **What Still Works**:
