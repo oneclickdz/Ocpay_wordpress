@@ -37,29 +37,7 @@ if ( ! defined( 'OCPAY_WOOCOMMERCE_BASENAME' ) ) {
 	define( 'OCPAY_WOOCOMMERCE_BASENAME', plugin_basename( __FILE__ ) );
 }
 
-// Register custom cron schedule EARLY so activation scheduling works
-add_filter( 'cron_schedules', 'ocpay_register_cron_schedule', 5 );
-function ocpay_register_cron_schedule( $schedules ) {
-	if ( ! isset( $schedules['ocpay_every_20_minutes'] ) ) {
-		$schedules['ocpay_every_20_minutes'] = array(
-			'interval' => 20 * MINUTE_IN_SECONDS,
-			'display'  => esc_html__( 'Every 20 Minutes', 'ocpay-woocommerce' ),
-		);
-	}
-	return $schedules;
-}
-
-// Ensure cron event exists (helps if schedule failed on activation previously)
-add_action( 'plugins_loaded', 'ocpay_ensure_cron_event', 15 );
-function ocpay_ensure_cron_event() {
-	if ( ! wp_next_scheduled( 'wp_scheduled_event_ocpay_check_payment_status' ) ) {
-		// Delay first run by 60s to allow WooCommerce to finish loading
-		wp_schedule_event( time() + 60, 'ocpay_every_20_minutes', 'wp_scheduled_event_ocpay_check_payment_status' );
-		if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
-			error_log( 'OCPay: Scheduled missing payment status cron event' );
-		}
-	}
-}
+// Cron scheduling removed - status checks now happen on-demand when pages load
 
 // Declare HPOS compatibility early
 add_action( 'before_woocommerce_init', function() {
@@ -70,17 +48,15 @@ add_action( 'before_woocommerce_init', function() {
 
 // Register activation/deactivation hooks
 register_activation_hook( __FILE__, function() {
-	// Force cron schedule registration before scheduling
-	add_filter( 'cron_schedules', 'ocpay_register_cron_schedule', 5 );
-	if ( ! wp_next_scheduled( 'wp_scheduled_event_ocpay_check_payment_status' ) ) {
-		wp_schedule_event( time() + 60, 'ocpay_every_20_minutes', 'wp_scheduled_event_ocpay_check_payment_status' );
-	}
+	// Clear any old cron events from previous version
+	wp_clear_scheduled_hook( 'wp_scheduled_event_ocpay_check_payment_status' );
 	update_option( 'ocpay_woocommerce_version', OCPAY_WOOCOMMERCE_VERSION );
 	update_option( 'ocpay_woocommerce_activated', current_time( 'mysql' ) );
 	flush_rewrite_rules();
 } );
 
 register_deactivation_hook( __FILE__, function() {
+	// Clear any scheduled events
 	wp_clear_scheduled_hook( 'wp_scheduled_event_ocpay_check_payment_status' );
 	flush_rewrite_rules();
 } );
@@ -206,12 +182,6 @@ class OCPay_WooCommerce {
 	public function init_payment_gateway() {
 		// Include WooCommerce dependent files
 		$this->includes();
-
-		// Initialize status polling with 20-minute schedule
-		add_action( 'wp_scheduled_event_ocpay_check_payment_status', array( $this, 'check_pending_payments' ) );
-
-		// Register custom cron schedule
-		add_filter( 'cron_schedules', array( $this, 'add_cron_schedules' ) );
 	}
 
 	/**
@@ -303,33 +273,7 @@ class OCPay_WooCommerce {
 		);
 	}
 
-	/**
-	 * Add custom cron schedules
-	 *
-	 * @param array $schedules Array of cron schedules.
-	 * @return array
-	 */
-	public function add_cron_schedules( $schedules ) {
-		if ( ! isset( $schedules['ocpay_every_20_minutes'] ) ) {
-			$schedules['ocpay_every_20_minutes'] = array(
-				'interval' => 20 * MINUTE_IN_SECONDS,
-				'display'  => esc_html__( 'Every 20 Minutes', 'ocpay-woocommerce' ),
-			);
-		}
-		return $schedules;
-	}
 
-	/**
-	 * Check pending payments status (called by cron)
-	 *
-	 * @return void
-	 */
-	public function check_pending_payments() {
-		// Delegate to status checker
-		if ( class_exists( 'OCPay_Status_Checker' ) ) {
-			OCPay_Status_Checker::get_instance()->check_pending_payments();
-		}
-	}
 
 	/**
 	 * AJAX handler for test connection
@@ -457,14 +401,8 @@ class OCPay_WooCommerce {
 	 * @return void
 	 */
 	public function activate() {
-		// Schedule status polling cron job - every 20 minutes
-		if ( ! wp_next_scheduled( 'wp_scheduled_event_ocpay_check_payment_status' ) ) {
-			wp_schedule_event(
-				time(),
-				'ocpay_every_20_minutes',
-				'wp_scheduled_event_ocpay_check_payment_status'
-			);
-		}
+		// Clear any old cron jobs from previous versions
+		wp_clear_scheduled_hook( 'wp_scheduled_event_ocpay_check_payment_status' );
 
 		// Create plugin version option
 		update_option( 'ocpay_woocommerce_version', self::$version );
@@ -480,7 +418,7 @@ class OCPay_WooCommerce {
 	 * @return void
 	 */
 	public function deactivate() {
-		// Unschedule cron job
+		// Clear any scheduled events
 		wp_clear_scheduled_hook( 'wp_scheduled_event_ocpay_check_payment_status' );
 
 		// Flush rewrite rules
