@@ -1,0 +1,28 @@
+.wc-block-components-radio-control__option:has(input[value="ocpay"]) .wc-block-components-radio-control__label-group::after {
+    content: "";
+    background-image: var(--ocpay-icon-url);
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+    width: 50px;
+    height: 32px;
+    display: block;
+    margin-left: auto;
+    border-radius: 4px;
+    border: 1px solid #e0e0e0;
+    padding: 4px;
+    background-color: #fff;
+}
+
+/* More specific selector */
+.wc-block-components-radio-control__label[for*="ocpay"] {
+    width: 100%;
+    display: flex;
+    align-items: center;
+}
+
+/* Make description text smaller */
+.wc-block-components-radio-control__option:has(input[value="ocpay"]) .wc-block-components-radio-control__description {
+    font-size: 0.85em;
+    color: #757575;
+}

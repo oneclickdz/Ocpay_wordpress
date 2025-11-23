@@ -33,7 +33,7 @@ jobs:
       - name: Get current version
         id: get_version
         run: |
-          CURRENT_VERSION=$(grep -oP "Version:\s*\K[\d.]+" ocpay-woocommerce.php)
+          CURRENT_VERSION=$(grep -oP "Version:\s*\K[\d.]+" ocpay-gateway.php)
           echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
           echo "Current version: $CURRENT_VERSION"
 
@@ -69,8 +69,8 @@ jobs:
           CURRENT_VERSION="${{ steps.get_version.outputs.current_version }}"
 
           # Update version in main plugin file
-          sed -i "s/Version: $CURRENT_VERSION/Version: $NEW_VERSION/" ocpay-woocommerce.php
-          sed -i "s/OCPAY_WOOCOMMERCE_VERSION', '$CURRENT_VERSION'/OCPAY_WOOCOMMERCE_VERSION', '$NEW_VERSION'/" ocpay-woocommerce.php
+          sed -i "s/Version: $CURRENT_VERSION/Version: $NEW_VERSION/" ocpay-gateway.php
+          sed -i "s/OCPAY_VERSION', '$CURRENT_VERSION'/OCPAY_VERSION', '$NEW_VERSION'/" ocpay-gateway.php
 
           # Update version in composer.json
           sed -i "s/\"version\": \"$CURRENT_VERSION\"/\"version\": \"$NEW_VERSION\"/" composer.json
@@ -81,17 +81,17 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add ocpay-woocommerce.php composer.json
+          git add ocpay-gateway.php composer.json
           git commit -m "chore: bump version to ${{ steps.calc_version.outputs.new_version }}"
           git push
 
       - name: Create plugin zip
         run: |
           NEW_VERSION="${{ steps.calc_version.outputs.new_version }}"
-          ZIP_NAME="ocpay-woocommerce-$NEW_VERSION.zip"
+          ZIP_NAME="ocpay-gateway-$NEW_VERSION.zip"
 
           # Create a temporary directory for the plugin
-          mkdir -p /tmp/ocpay-woocommerce
+          mkdir -p /tmp/ocpay-gateway
 
           # Build rsync exclude arguments from .distignore
           EXCLUDE_ARGS=""
@@ -108,11 +108,11 @@ jobs:
           fi
 
           # Copy plugin files using rsync with exclusions from .distignore
-          rsync -av $EXCLUDE_ARGS ./ /tmp/ocpay-woocommerce/
+          rsync -av $EXCLUDE_ARGS ./ /tmp/ocpay-gateway/
 
           # Create zip file
           cd /tmp
-          zip -r "/tmp/$ZIP_NAME" ocpay-woocommerce/
+          zip -r "/tmp/$ZIP_NAME" ocpay-gateway/
 
           # Move zip to workspace
           mv "/tmp/$ZIP_NAME" "$GITHUB_WORKSPACE/"
@@ -132,19 +132,19 @@ jobs:
           tag_name: v${{ steps.calc_version.outputs.new_version }}
           name: Release v${{ steps.calc_version.outputs.new_version }}
           body: |
-            ## OCPay for WooCommerce v${{ steps.calc_version.outputs.new_version }}
+            ## OCPay Gateway for WooCommerce v${{ steps.calc_version.outputs.new_version }}
 
             Auto-generated release with version bump: ${{ inputs.version_bump }}
 
             ### Installation
-            1. Download the `ocpay-woocommerce-${{ steps.calc_version.outputs.new_version }}.zip` file
+            1. Download the `ocpay-gateway-${{ steps.calc_version.outputs.new_version }}.zip` file
             2. Go to WordPress Admin → Plugins → Add New → Upload Plugin
             3. Upload the zip file and activate the plugin
 
             ### Changes
             - Version bumped from ${{ steps.get_version.outputs.current_version }} to ${{ steps.calc_version.outputs.new_version }}
           files: |
-            ocpay-woocommerce-${{ steps.calc_version.outputs.new_version }}.zip
+            ocpay-gateway-${{ steps.calc_version.outputs.new_version }}.zip
           draft: false
           prerelease: false
         env:
