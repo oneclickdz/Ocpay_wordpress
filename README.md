@@ -51,20 +51,22 @@ You'll need to obtain API keys for each mode from your OCPay merchant dashboard.
 1. Go to WooCommerce > Settings > Payments > OCPay
 2. Enable the payment gateway
 3. Configure the following settings:
-   - **Title**: The payment method name shown to customers (e.g., "Credit Card via OCPay")
-   - **Description**: Description shown during checkout
-   - **Sandbox Mode**: Enable this to test with sandbox API keys
-   - **API Key**: Enter your OCPay API key (sandbox or production)
-   - **API Secret**: Enter your OCPay API secret (sandbox or production)
+   - **Title**: The payment method name shown to customers (e.g., "OCPay")
+   - **Description**: Description shown during checkout (e.g., "Pay securely with OCPay")
+   - **Environment**: Select "Sandbox" for testing or "Production" for live payments
+   - **Sandbox API Key**: Enter your sandbox API key for testing
+   - **Production API Key**: Enter your production API key for live payments
+   - **Fee Mode**: Choose who pays the transaction fees (Merchant, Customer, or Split)
+   - **Final Order Status**: Set the order status after successful payment
 4. Save your settings
 5. Test a checkout to ensure everything works correctly
 
 ### Testing with Sandbox Mode
 
-1. Enable "Sandbox Mode" in the plugin settings
-2. Use your sandbox API credentials
+1. Set "Environment" to "Sandbox" in the plugin settings
+2. Enter your sandbox API key in the "Sandbox API Key" field
 3. Place test orders to verify the integration
-4. Once testing is complete, switch to production mode with live API keys
+4. Once testing is complete, switch "Environment" to "Production" and use your production API key
 
 ## Documentation
 
